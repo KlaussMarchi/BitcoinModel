@@ -1,0 +1,2 @@
+bitcoin: https://www.investing.com/crypto/bitcoin/historical-data
+juros: https://fred.stlouisfed.org/series/FEDFUNDS#0
