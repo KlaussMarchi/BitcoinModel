@@ -1,101 +1,124 @@
 import winsound
-import urllib.request
+import requests
 import json, os
 from time import sleep
 from time import time
 import pywhatkit as kit
-import datetime
-
-API  = r'http://api.coindesk.com/v1/bpi/currentprice.json'
-path = r'data.json'
-referenceBit = 0
+import datetime, pyautogui
 
 
-def sendZap(msg):
+def sendEvent(eventType, message, delay=0.0):
+    if eventType == 'error':
+        print(f'\033[31m[error]\033[0m', message)
+    elif eventType == 'success':
+        print(f'\033[34m[success]\033[0m', message)
+    else:
+        print(f'\033[32m[event]\033[0m', message)
+
+    if delay > 0.0:
+        sleep(delay)
+    
+
+def sendZap(msg, interval=2):
     phone = '+5522997815943'
-    now = datetime.datetime.now()
+    now   = datetime.datetime.now()
+
     hour = now.hour
-    min  = now.minute + 1
-    kit.sendwhatmsg(phone_no=phone, message=msg, time_hour=hour, time_min=min)
-
-
-def getJsonData(path):
-    data = None
+    min  = now.minute + interval
 
     try:
-        with open(path, 'r', encoding='utf-8') as file:
-            data = json.load(file)
+        kit.sendwhatmsg(phone_no=phone, message=msg, time_hour=hour, time_min=min, tab_close=True)
+        sendEvent('success', 'mensagem enviada')
     except Exception as error:
-        raise Exception(f'erro: {error}')
+        sendEvent('error', error, delay=10)
+        return sendZap(msg, interval=interval+1)
     
-    return data
+    sendEvent('event', 'saindo da função')
 
 
-def saveJsonData(path, data):
+def getJson(filePath):
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(filePath, 'r', encoding='utf-8') as file:
+            return json.load(file)
+    except Exception as error:
+        print(error)
+        return None
 
-        with open(path, 'w', encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False, indent=4)
-    except Exception as e:
-        raise Exception(f"Ocorreu um erro ao salvar o arquivo JSON: {e}")
-
-
-def getBitcoin():
-    value = None
-
+    
+def saveJson(data, filePath):
     try:
-        with urllib.request.urlopen(API) as url:
-            response = url.read()
-            data  = json.loads(response.decode('utf-8'))
-            value = float(data['bpi']['USD']['rate'].replace(",", ""))
-    except:
-        sleep(2)
-        print('erro ao obter dados do bitcoin, tentando novamente...')
-        return getBitcoin()
-
-    return value
+        with open(filePath, 'w', encoding='utf-8') as file:
+            json.dump(data, file, indent=4, ensure_ascii=False)
+        
+        return True
+    except Exception as error:
+        print(error)
+        return False
 
 
-def handleBitcoin(value):
-    global referenceBit
+class BitcoinAlert:
+    API = r'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd'
+    filePath = 'data.json'
+    INTERVAL = None
+    MIN_PERCENT_ALERT = None
+
+    def __init__(self, interval=30.0, minPercent=2.0):
+        self.startTime = time()
+        self.lastValue = self.getSavedValue()
+        self.INTERVAL  = interval
+        self.MIN_PERCENT_ALERT = minPercent
+
+    def getSavedValue(self):
+        data = getJson(self.filePath)
+        return data.get('value')
     
-    variation = (value - referenceBit)/referenceBit * 100
-    print(f'valor: {value:.0f}$ | variação a partir de {referenceBit:.0f}: {variation:.2f}%')
-
-    if variation < 1:
-        return
-
-    referenceBit = value
-    saveJsonData(path, {'reference': value})
-
-    winsound.Beep(1000, 5000)
-    print('comprar!!')
-    sendZap('compre!! imediatamente')
-    print()
-
-
-def setup():
-    global startTime, referenceBit
-    data = getJsonData(path)
-    referenceBit = data.get('reference')
-
-    if referenceBit == 0:
-        value = getBitcoin()
-        referenceBit = value
-        saveJsonData(path, {'reference': value})
+    def saveCurrentValue(self, value):
+        data = {'value': value}
+        return saveJson(data, self.filePath)
     
+    def getCurrentValue(self):
+        try:
+            response = requests.get(self.API, timeout=2.0)
+            data     = response.json()
+            return data['bitcoin']['usd']
+        except Exception as error:
+            sendEvent('error', error, delay=2.0)
+            return None
+        
+    def handle(self):
+        if time() - self.startTime < self.INTERVAL:
+            return
 
+        self.startTime = time()
+        bitcoin = self.getCurrentValue()
 
-def loop():
-    value = getBitcoin()
-    handleBitcoin(value)
-    sleep(30)
-    
+        if bitcoin is None or bitcoin < 1.0:
+            return
+
+        variation = (bitcoin - self.lastValue)/self.lastValue
+        percent = round(variation*100, 2)
+        sendEvent('event', f'${bitcoin:.2f} | {percent}% variation')
+
+        if percent < self.MIN_PERCENT_ALERT:
+            return
+        
+        self.saveCurrentValue(bitcoin)
+        sendEvent('success', 'valor salvo')
+
+        winsound.Beep(2000, duration=1000)
+        sendZap(f'BITCOIN SUBIU! ${bitcoin:.2f}')
+
 
 if __name__ == '__main__':
-    setup()
+    script_dir = os.path.dirname(os.path.abspath(__file__)) 
+    os.chdir(script_dir) # AGORA EXECUTO O CÓDIGO DE QQ LUGAR
+
+    bitcoin = BitcoinAlert(interval=30.0, minPercent=2.0)
+    print('PYCOIN - API INICIADA')
+    sleep(2.0)
+    sendEvent('event', 'escutando API')
+    print()
 
     while True:
-        loop()
+        bitcoin.handle()
     
